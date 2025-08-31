@@ -9,3 +9,8 @@ alias(
     name = "batfish_testlib",
     actual = "//projects/batfish/src/test/java:batfish_testlib",
 )
+
+alias(
+    name = "BfRunner",
+    actual = "//projects/batfish/src/main/java/org/batfish:BfRunner"
+)

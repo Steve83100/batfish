@@ -97,6 +97,11 @@ public final class Bgpv4Rib extends BgpRib<Bgpv4Route> {
       return ImmutableSet.copyOf(_bgpRoutesByNhip.get(nhip));
     }
 
+    /** Get all routes despite their prefixes or next-hops. */
+    Set<Bgpv4Route> getAllBgpRoutes() {
+      return ImmutableSet.copyOf(_bgpRoutesByNhip.values());
+    }
+
     void updateMainRibPrefixes(RibDelta<AnnotatedRoute<AbstractRoute>> mainRibDelta) {
       // TODO Filter to routes that pass the resolution restriction, when one is added
       for (RouteAdvertisement<AnnotatedRoute<AbstractRoute>> action : mainRibDelta.getActions()) {
@@ -387,4 +392,8 @@ public final class Bgpv4Rib extends BgpRib<Bgpv4Route> {
           return false;
         }
       };
+
+  public Set<Bgpv4Route> getAllRoutes() {
+    return _resolvabilityEnforcer.getAllBgpRoutes();
+  }
 }

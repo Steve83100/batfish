@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 java_library(
     name = "batfish",
     srcs = glob([
-        "**/*.java",
+        "*/**/*.java"
     ]),
     plugins = [
         "//:auto_service_plugin",
@@ -75,6 +75,20 @@ java_library(
         "@maven//:org_glassfish_jersey_core_jersey_server",
         "@maven//:org_jgrapht_jgrapht_core",
     ],
+)
+
+java_binary(
+    name = "BfRunner",
+    srcs = [
+        "BfRunner.java"
+    ],
+    main_class = "org.batfish.BfRunner",
+    deps = [
+        ":batfish",
+        "//projects/batfish-common-protocol:common",
+        "@maven//:org_apache_commons_commons_lang3",
+        "@maven//:org_apache_logging_log4j_log4j_api",
+    ]
 )
 
 pmd_test(

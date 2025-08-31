@@ -5,6 +5,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Verify.verify;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.regex.Pattern.CASE_INSENSITIVE;
+import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
 import static org.batfish.bddreachability.BDDMultipathInconsistency.computeMultipathInconsistencies;
 import static org.batfish.bddreachability.BDDReachabilityUtils.constructFlows;
@@ -69,6 +70,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.SortedSet;
@@ -176,6 +178,8 @@ import org.batfish.datamodel.questions.Question;
 import org.batfish.datamodel.vxlan.Layer2Vni;
 import org.batfish.datamodel.vxlan.Layer3Vni;
 import org.batfish.dataplane.TracerouteEngineImpl;
+import org.batfish.dataplane.ibdp.IibdpPlugin;
+import org.batfish.dataplane.ibdp.InterfaceModification;
 import org.batfish.grammar.BatfishCombinedParser;
 import org.batfish.grammar.BatfishParseException;
 import org.batfish.grammar.BatfishParseTreeWalker;
@@ -232,6 +236,7 @@ import org.batfish.specifier.UnionLocationSpecifier;
 import org.batfish.storage.FileBasedStorage;
 import org.batfish.storage.StorageProvider;
 import org.batfish.symbolic.IngressLocation;
+import org.batfish.topology.TopologyProviderCustomConfigs;
 import org.batfish.topology.TopologyProviderImpl;
 import org.batfish.vendor.ConversionContext;
 import org.batfish.vendor.VendorConfiguration;
@@ -456,7 +461,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
 
   private Map<String, DataPlanePlugin> _dataPlanePlugins;
 
-  private final TopologyProvider _topologyProvider;
+  private TopologyProvider _topologyProvider;
 
   public Batfish(
       Settings settings,
@@ -737,6 +742,165 @@ public class Batfish extends PluginConsumer implements IBatfish {
     return answerElement;
   }
 
+  /**
+   * An additional feature which allows recomputation based on past convergence after topology changes.
+   * Subclasses can choose whether to implement this feature, or to just pretend not seeing it,
+   * and simply let it call the original version of computeDataPlane.
+   *
+   * For now, to leave original Batfish code as untouched as possible, a new engine "iibdp" is created for this feature.
+   * Maybe in the future, we can merge this feature into ibdp.
+   */
+  public DataPlaneAnswerElement computeDataPlaneWithIntfMods(
+          NetworkSnapshot snapshot,
+          Queue<InterfaceModification> intfMods
+  ) {
+    // By switching to this custom topology provider, generating topology from externally specified configs is possible.
+    _topologyProvider = new TopologyProviderCustomConfigs(this, _storage);
+
+    LOGGER.info("Starting incremental data plane computation (iibdp)...");
+
+    _cachedDataPlanes.invalidate(snapshot);
+
+    _cachedDataPlanes.put(DUMMY_SNAPSHOT, DUMMY_DATAPLANE);
+    _cachedDataPlanes.invalidate(DUMMY_SNAPSHOT);
+
+    // Each engine's name is defined in its own implementation of DataPlanePlugin.java.
+    // During initialization of plugins, all engines and their names are registered into _dataPlanePlugins.
+    // We named the new engine "iibdp" in IibdpPlugin.java, so that it gets registered with a unique name.
+
+    // But that's not it.
+
+    // _settings is an instance of Settings initialized with engine name = "ibdp".
+    // It tells Batfish's getDataPlanePlugin() which engine to retrieve from _dataPlanePlugins.
+    // Therefore, we also need to modify engine name in _settings here,
+    // so that the new engine indeed gets retrieved and used.
+
+    _settings.setDataplaneEngineName("iibdp");
+    DataPlanePlugin dataPlanePlugin = getDataPlanePlugin();
+    ComputeDataPlaneResult result = ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithIntfMods(
+            snapshot, intfMods
+    ); // Downcast
+    DataPlaneAnswerElement answerElement = result._answerElement;
+    DataPlane dataplane = result._dataPlane;
+    TopologyContainer topologyContainer = result._topologies;
+    result = null;
+
+    saveDataPlane(snapshot, dataplane, topologyContainer);
+    LOGGER.info("Batfish: Finished incremental data plane computation successfully");
+    return answerElement;
+  }
+
+  public DataPlaneAnswerElement computeDataPlaneWithLinkPerms(NetworkSnapshot snapshot) {
+    _topologyProvider = new TopologyProviderCustomConfigs(this, _storage);
+
+    LOGGER.info("Batfish: Starting computation with link permutations");
+    System.out.println("Batfish: Starting computation with link permutations");
+
+    _cachedDataPlanes.invalidate(snapshot);
+
+    _cachedDataPlanes.put(DUMMY_SNAPSHOT, DUMMY_DATAPLANE);
+    _cachedDataPlanes.invalidate(DUMMY_SNAPSHOT);
+
+    _settings.setDataplaneEngineName("iibdp");
+    DataPlanePlugin dataPlanePlugin = getDataPlanePlugin();
+    Map<String, ComputeDataPlaneResult> hashToResult =
+            ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithLinkPerms(snapshot);
+
+    // Answer element and topologies are assumed to be identical, so just use one of them
+    ComputeDataPlaneResult defaultResult = null;
+    for (ComputeDataPlaneResult result : hashToResult.values()){
+      defaultResult = result;
+      break;
+    }
+    assert defaultResult != null : "No hashToResult is returned by the engine";
+    DataPlaneAnswerElement answerElement = defaultResult._answerElement;
+    TopologyContainer topologyContainer = defaultResult._topologies;
+
+    // Extract all data planes and their hash
+    Map<String, DataPlane> hashToDataPlane = new TreeMap<>();
+    for (Map.Entry<String, ComputeDataPlaneResult> entry : hashToResult.entrySet()){
+      hashToDataPlane.put(entry.getKey(), entry.getValue()._dataPlane);
+    }
+
+    // Remove the giant result mapping
+    hashToResult = null;
+
+    // Save results including all data planes, indexed by hash
+    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer);
+
+    LOGGER.info("Finished computation of full permutation successfully");
+    System.out.println("Finished computation of full permutation successfully");
+    return answerElement;
+  }
+
+  public DataPlaneAnswerElement computeDataPlaneWithLinkResets(NetworkSnapshot snapshot) {
+    _topologyProvider = new TopologyProviderCustomConfigs(this, _storage);
+
+    LOGGER.info("Batfish: Starting computation with link resets");
+    System.out.println("Batfish: Starting computation with link resets");
+
+    _cachedDataPlanes.invalidate(snapshot);
+
+    _cachedDataPlanes.put(DUMMY_SNAPSHOT, DUMMY_DATAPLANE);
+    _cachedDataPlanes.invalidate(DUMMY_SNAPSHOT);
+
+    _settings.setDataplaneEngineName("iibdp");
+    DataPlanePlugin dataPlanePlugin = getDataPlanePlugin();
+    Map<String, ComputeDataPlaneResult> hashToResult =
+            ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithLinkResets(snapshot);
+
+    // Answer element and topologies are assumed to be identical, so just use one of them
+    ComputeDataPlaneResult defaultResult = null;
+    for (ComputeDataPlaneResult result : hashToResult.values()){
+      defaultResult = result;
+      break;
+    }
+    assert defaultResult != null : "No hashToResult is returned by the engine";
+    DataPlaneAnswerElement answerElement = defaultResult._answerElement;
+    TopologyContainer topologyContainer = defaultResult._topologies;
+
+    // Extract all data planes and their hash
+    Map<String, DataPlane> hashToDataPlane = new TreeMap<>();
+    for (Map.Entry<String, ComputeDataPlaneResult> entry : hashToResult.entrySet()){
+      hashToDataPlane.put(entry.getKey(), entry.getValue()._dataPlane);
+    }
+
+    // Remove the giant result mapping
+    hashToResult = null;
+
+    // Save results including all data planes, indexed by hash
+    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer);
+
+    LOGGER.info("Finished link reset trials successfully");
+    System.out.println("Finished of link reset trials successfully");
+    return answerElement;
+  }
+
+  public List<InterfaceModification> loadIntfs(NetworkSnapshot snapshot) {
+    // Get snapshot's configuration
+    Map<String, Configuration> configurations = loadConfigurations(snapshot);
+
+    // Generate a layer 3 topology from configuration
+    _topologyProvider = new TopologyProviderCustomConfigs(this, _storage);
+    ((TopologyProviderCustomConfigs) _topologyProvider).setConfigurations(configurations);
+    Topology initialLayer3Topology = _topologyProvider.getInitialLayer3Topology(snapshot);
+
+    // Retrieve all layer 3 interfaces from topology. Only keep interface on one side of each edge
+    Set<Set<String>> seenNodePairs = new HashSet<>();
+    List<InterfaceModification> intfList = initialLayer3Topology.sortedEdges().stream()
+            // With dual edges, only use tail side of one single edge for now, and filter out the other edge
+            .filter(edge -> {
+                Set<String> nodePair = Set.of(edge.getNode1(), edge.getNode2());
+                return seenNodePairs.add(nodePair);
+            })
+            .map(edge -> new InterfaceModification(edge.getNode1(), edge.getInt1(), true))
+            .collect(toList());
+
+    LOGGER.info("Generated intfList from configurations. List size: " + intfList.size());
+    System.out.println("Generated intfList from configurations. List size: " + intfList.size());
+    return intfList;
+  }
+
   /* Write the dataplane to disk and cache, and write the answer element to disk.
    */
   private void saveDataPlane(
@@ -762,6 +926,37 @@ public class Batfish extends PluginConsumer implements IBatfish {
       _storage.storeVxlanTopology(topologies.getVxlanTopology(), snapshot);
     } catch (IOException e) {
       throw new BatfishException("Failed to save data plane", e);
+    }
+    _logger.printElapsedTime();
+  }
+
+  /**
+   * Save all data planes to storage. Use hash as their file paths.
+   */
+  private void saveMultiDataPlane(
+          NetworkSnapshot snapshot, Map<String, DataPlane> hashToDataPlane, TopologyContainer topologies) {
+    // Disable cache for now. Just use storage
+//    _cachedDataPlanes.put(snapshot, dataplane);
+
+    System.out.println("Batfish: Saving all data planes to storage...");
+    _logger.resetTimer();
+    newBatch("Writing multiple data planes to disk", 0);
+
+    try {
+      _storage.storeBgpTopology(topologies.getBgpTopology(), snapshot);
+      _storage.storeEigrpTopology(topologies.getEigrpTopology(), snapshot);
+      _storage.storeL3Adjacencies(topologies.getL3Adjacencies(), snapshot);
+      _storage.storeLayer3Topology(topologies.getLayer3Topology(), snapshot);
+      _storage.storeOspfTopology(topologies.getOspfTopology(), snapshot);
+      _storage.storeVxlanTopology(topologies.getVxlanTopology(), snapshot);
+
+      for (Map.Entry<String, DataPlane> entry : hashToDataPlane.entrySet()) {
+        String hash = entry.getKey();
+        DataPlane dataPlane = entry.getValue();
+        ((FileBasedStorage) _storage).storeHashedDataPlane(dataPlane, snapshot, hash);
+      }
+    } catch (IOException e) {
+      throw new BatfishException("Failed to save multiple data planes", e);
     }
     _logger.printElapsedTime();
   }
@@ -1152,6 +1347,37 @@ public class Batfish extends PluginConsumer implements IBatfish {
     } catch (ExecutionException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  /**
+   * Load all data planes to storage. Use hash (now with type String) to identify them
+   */
+  public Map<String, DataPlane> loadMultiDataPlane(NetworkSnapshot snapshot) {
+    // Cache is disabled for now. Just use storage
+    System.out.println("Batfish: Loading all data planes from storage...");
+    try {
+      return ((FileBasedStorage) _storage).loadMultiDataPlane(snapshot);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+
+//      try {
+//        return _cachedDataPlanes.get(
+//                snapshot,
+//                () -> {
+//                  LOGGER.info("Data plane cache miss on snapshot {}", snapshot);
+//                  long start = System.currentTimeMillis();
+//                  newBatch("Loading data plane from disk", 0);
+//                  DataPlane dp = _storage.loadDataPlane(snapshot);
+//                  LOGGER.info(
+//                          "Loading data plane for snapshot {} took {}ms",
+//                          snapshot,
+//                          System.currentTimeMillis() - start);
+//                  return dp;
+//                });
+//      } catch (ExecutionException e) {
+//        throw new RuntimeException(e);
+//      }
   }
 
   @Override

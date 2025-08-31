@@ -1557,6 +1557,49 @@ public class FileBasedStorage implements StorageProvider {
     return new SimpleFieldsDataPlane(perNodeDataPlanes, forwardingAnalysis);
   }
 
+  /**
+   * Load multiple data planes from directories named by their hash
+   */
+  public @Nonnull Map<String, DataPlane> loadMultiDataPlane(NetworkSnapshot snapshot) throws IOException {
+    // Create our mapping of hash -> data plane
+    Map<String, DataPlane> hashToDataPlane = new HashMap<>();
+
+    // Get the root path where all data planes sit
+    Path dataplanePath = getDataPlanePath(snapshot);
+
+    try {
+      // Get a collection of all sub-directories under root path, named by hash
+      DirectoryStream<Path> dataPlanes = Files.newDirectoryStream(dataplanePath);
+      for (Path hashedDataPlane : dataPlanes) {
+
+        // Get the actual hash from directory names
+        String hash = hashedDataPlane.getFileName().toString();
+
+        // This part of code does the original job, retrieving data plane from a deeper directory
+        Map<Path, String> namesByPath = new TreeMap<>();
+        DirectoryStream<Path> hostDataPlanes = Files.newDirectoryStream(hashedDataPlane);
+        for (Path hostDataPlane : hostDataPlanes) {
+          String name = hostDataPlane.getFileName().toString();
+          if (name.equals(RELPATH_DATA_PLANE_FORWARDING_ANALYSIS)) {
+            continue;
+          }
+          namesByPath.put(hostDataPlane, fromBase64(name));
+        }
+        Map<String, PerHostDataPlane> perNodeDataPlanes =
+                deserializeObjects(namesByPath, PerHostDataPlane.class);
+        ForwardingAnalysis forwardingAnalysis =
+                deserializeObjectUnchecked(getHashedDataPlaneForwardingAnalysisPath(snapshot, hash));
+
+        // Finally, put this data plane together with its hash into our own mapping
+        hashToDataPlane.put(hash, new SimpleFieldsDataPlane(perNodeDataPlanes, forwardingAnalysis));
+      }
+    } catch (IOException e) {
+      throw new BatfishException("Error reading data plane directory", e);
+    }
+
+    return hashToDataPlane;
+  }
+
   @Override
   public void storeDataPlane(DataPlane dataPlane, NetworkSnapshot snapshot) throws IOException {
     dataPlane.getFibs().keySet().parallelStream()
@@ -1577,6 +1620,31 @@ public class FileBasedStorage implements StorageProvider {
             });
     serializeObject(
         dataPlane.getForwardingAnalysis(), getDataPlaneForwardingAnalysisPath(snapshot));
+  }
+
+  /**
+   * Store data plane in a deeper directory named by its hash
+   * Used for storing multiple data plane indexed by their hash
+   */
+  public void storeHashedDataPlane(DataPlane dataPlane, NetworkSnapshot snapshot, String hash) throws IOException {
+    dataPlane.getFibs().keySet().parallelStream()
+            .forEach(
+                    hostname -> {
+                      PerHostDataPlane dp =
+                              new PerHostDataPlane(
+                                      dataPlane.getBgpRoutes().row(hostname),
+                                      dataPlane.getBgpBackupRoutes().row(hostname),
+                                      dataPlane.getEvpnRoutes().row(hostname),
+                                      dataPlane.getEvpnBackupRoutes().row(hostname),
+                                      dataPlane.getFibs().get(hostname),
+                                      dataPlane.getLayer2Vnis().row(hostname),
+                                      dataPlane.getLayer3Vnis().row(hostname),
+                                      dataPlane.getPrefixTracingInfoSummary().get(hostname),
+                                      dataPlane.getRibs().row(hostname));
+                      serializeObject(dp, getHashedDataPlaneHostPath(snapshot, hash, hostname));
+                    });
+    serializeObject(
+            dataPlane.getForwardingAnalysis(), getHashedDataPlaneForwardingAnalysisPath(snapshot, hash));
   }
 
   @Override
@@ -1702,8 +1770,28 @@ public class FileBasedStorage implements StorageProvider {
     return getDataPlanePath(snapshot).resolve(toBase64(hostname));
   }
 
+  /**
+   * Add a directory named by the data plane's hash between snapshot and hostname
+   * Used for storing multiple data plane indexed by their hash
+   */
+  private @Nonnull Path getHashedDataPlaneHostPath(NetworkSnapshot snapshot, String hash, String hostname) {
+    return getDataPlanePath(snapshot)
+            .resolve(hash)
+            .resolve(toBase64(hostname));
+  }
+
   private @Nonnull Path getDataPlaneForwardingAnalysisPath(NetworkSnapshot snapshot) {
     return getDataPlanePath(snapshot).resolve(RELPATH_DATA_PLANE_FORWARDING_ANALYSIS);
+  }
+
+  /**
+   * Add a directory named by the data plane's hash between snapshot and hostname
+   * Used for storing multiple data plane indexed by their hash
+   */
+  private @Nonnull Path getHashedDataPlaneForwardingAnalysisPath(NetworkSnapshot snapshot, String hash) {
+    return getDataPlanePath(snapshot)
+            .resolve(hash)
+            .resolve(RELPATH_DATA_PLANE_FORWARDING_ANALYSIS);
   }
 
   private @Nonnull Path getReferenceLibraryPath(NetworkId network) {
