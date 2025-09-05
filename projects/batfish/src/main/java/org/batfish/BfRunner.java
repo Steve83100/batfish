@@ -134,10 +134,12 @@ public class BfRunner {
 
 //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", true));
 //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", true));
-    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", false));
+//    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", false));
 //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", false));
-    test.computeDataPlaneWithIntfMods(intfMods);
+//    test.computeDataPlaneWithIntfMods(intfMods);
 
-//    test.computeDataPlaneWithLinkResets();
+//    test.computeDataPlaneWithLinkPerms();
+
+    test.computeDataPlaneWithLinkResets();
   }
 }

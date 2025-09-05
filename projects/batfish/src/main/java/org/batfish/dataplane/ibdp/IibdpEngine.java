@@ -725,6 +725,394 @@ final class IibdpEngine {
         }
     }
 
+    Map<String, ComputeDataPlaneResult> incrementalComputeDataPlaneWithResets(
+            NetworkSnapshot snapshot,
+            Map<String, Configuration> configurations,
+            TopologyProvider topologyProvider,
+            Set<BgpAdvertisement> externalAdverts,
+            Queue<InterfaceModification> intfList
+    ) {
+        LOGGER.info("Iibdp: Starting dataplane computation...");
+        SortedMap<String, Node> nodes =
+                toImmutableSortedMap(configurations.values(), Configuration::getHostname, Node::new);
+        List<VirtualRouter> vrs =
+                toListInRandomOrder(nodes.values().stream().flatMap(n -> n.getVirtualRouters().stream()));
+        NetworkConfigurations networkConfigurations = NetworkConfigurations.of(configurations);
+        IncrementalBdpAnswerElement answerElement = new IncrementalBdpAnswerElement();
+
+        // Keep track of distinct results
+        Map<String, ComputeDataPlaneResult> hashToResult = new HashMap<>();
+
+        while (true) {
+
+            // 1. Let an interface go down
+            InterfaceModification intfUp = intfList.remove(); // We asserted in IibdpPlugin that intfList is not empty
+            InterfaceModification intfDown = new InterfaceModification(
+                    intfUp._nodeName, intfUp._interfaceName, false
+            );
+            IibdpEngine.modifyInterfaceStatus(configurations, intfDown, false);
+
+
+
+            // 2. Continue computing with the link down
+            LOGGER.info("Iibdp: Building link down topology out of configurations");
+            ((TopologyProviderCustomConfigs) topologyProvider).setConfigurations(configurations);
+            TopologyContext initialTopologyContext =
+                    TopologyContext.builder()
+                            .setIpsecTopology(topologyProvider.getInitialIpsecTopology(snapshot))
+                            .setIsisTopology(
+                                    IsisTopology.initIsisTopology(
+                                            configurations, topologyProvider.getInitialLayer3Topology(snapshot)))
+                            .setLayer3Topology(topologyProvider.getInitialLayer3Topology(snapshot))
+                            .setLayer1Topologies(topologyProvider.getLayer1Topologies(snapshot))
+                            .setL3Adjacencies(topologyProvider.getInitialL3Adjacencies(snapshot))
+                            .setOspfTopology(topologyProvider.getInitialOspfTopology(snapshot))
+                            .setTunnelTopology(topologyProvider.getInitialTunnelTopology(snapshot))
+                            .build();
+
+            // SANITY CHECK: Look at current layer 3 topology!
+//            Topology l3Topo = initialTopologyContext.getLayer3Topology();
+//            SortedSet<Edge> l3Edges = l3Topo.sortedEdges();
+//            System.out.println("Within initialLayer3Topology in IibdpEngine: ");
+//            for (Edge edge : l3Edges) {
+//                System.out.println("Edge tail node: " + edge.getNode1() + " intf: " + edge.getInt1());
+//            }
+
+            IpOwners initialIpOwners = ((TopologyProviderCustomConfigs) topologyProvider).getCustomIpOwners(snapshot);
+            Map<Ip, Map<String, Set<String>>> initialIpVrfOwners = initialIpOwners.getIpVrfOwners();
+
+            computeIgpDataPlane(nodes, vrs, initialTopologyContext, answerElement);
+
+            LOGGER.info("Iibdp: Moving entire main RIB into delta; Preparing external BGP advertisements");
+            vrs.parallelStream()
+                    .forEach(
+                            vr -> vr.initForEgpComputationBeforeTopologyLoop(externalAdverts, initialIpVrfOwners));
+
+            /*
+             * Perform a fixed-point computation, in which every round the topology is updated based
+             * on what we have learned in the previous round.
+             */
+            // Since the topology iterations are incremental, clear fields that are pruned to get the real
+            // topology. They are not actually yet included in topologies.
+            TopologyContext initialTopologyContextWithHighLevelCleared =
+                    initialTopologyContext.toBuilder()
+                            .setIpsecTopology(IpsecTopology.EMPTY)
+                            .setTunnelTopology(TunnelTopology.EMPTY)
+                            .setVxlanTopology(VxlanTopology.EMPTY)
+                            .build();
+            PartialDataplane currentDataplane =
+                    nextDataplane(initialTopologyContextWithHighLevelCleared, nodes, vrs, initialIpOwners);
+
+            TopologyContext currentTopologyContext =
+                    nextTopologyContext(
+                            initialTopologyContextWithHighLevelCleared,
+                            currentDataplane,
+                            initialTopologyContext,
+                            networkConfigurations,
+                            initialIpVrfOwners);
+
+            Map<String, Collection<TrackRoute>> trackRoutesByHostname = collectTrackRoutes(configurations);
+            Map<String, Collection<TrackReachability>> trackReachabilitiesByHostname =
+                    collectTrackReachabilities(configurations);
+            Table<String, TrackReachability, Boolean> currentTrackReachabilityResults =
+                    nextTrackReachabilityResults(
+                            currentDataplane,
+                            currentTopologyContext,
+                            configurations,
+                            trackReachabilitiesByHostname);
+            Table<String, TrackRoute, Boolean> currentTrackRouteResults =
+                    nextTrackRouteResults(trackRoutesByHostname, nodes);
+            DataPlaneTrackMethodEvaluatorProvider currentTrackMethodEvaluatorProvider =
+                    nextTrackMethodEvaluatorProvider(currentTrackReachabilityResults, currentTrackRouteResults);
+            DataPlaneIpOwners currentIpOwners =
+                    new DataPlaneIpOwners(
+                            configurations,
+                            currentTopologyContext.getL3Adjacencies(),
+                            currentTrackMethodEvaluatorProvider);
+            int topologyIterations = 0;
+            boolean converged = false;
+            while (!converged && topologyIterations++ < MAX_TOPOLOGY_ITERATIONS) {
+                LOGGER.info("Iibdp: Starting topology iteration {}", topologyIterations);
+                boolean isOscillating =
+                        computeNonMonotonicPortionOfDataPlane(
+                                nodes,
+                                vrs,
+                                answerElement,
+                                currentTopologyContext,
+                                initialTopologyContext.getLayer3Topology(),
+                                currentIpOwners,
+                                networkConfigurations,
+                                currentTrackMethodEvaluatorProvider);
+                if (isOscillating) {
+                    // If we are oscillating here, network has no stable solution.
+                    LOGGER.error("Iibdp: Network has no stable solution");
+                    throw new BdpOscillationException("Iibdp: Network has no stable solution");
+                }
+
+                updateLayer3Vnis(vrs);
+                currentDataplane = null; // free the old one
+                currentDataplane = nextDataplane(currentTopologyContext, nodes, vrs, currentIpOwners);
+                TopologyContext nextTopologyContext =
+                        nextTopologyContext(
+                                currentTopologyContext,
+                                currentDataplane,
+                                initialTopologyContext,
+                                networkConfigurations,
+                                currentIpOwners.getIpVrfOwners());
+
+                Table<String, TrackReachability, Boolean> nextTrackReachabilityResults =
+                        nextTrackReachabilityResults(
+                                currentDataplane,
+                                currentTopologyContext,
+                                configurations,
+                                trackReachabilitiesByHostname);
+                Table<String, TrackRoute, Boolean> nextTrackRouteResults =
+                        nextTrackRouteResults(trackRoutesByHostname, nodes);
+                currentTrackMethodEvaluatorProvider =
+                        nextTrackMethodEvaluatorProvider(nextTrackReachabilityResults, nextTrackRouteResults);
+                DataPlaneIpOwners nextIpOwners =
+                        new DataPlaneIpOwners(
+                                configurations,
+                                nextTopologyContext.getL3Adjacencies(),
+                                currentTrackMethodEvaluatorProvider);
+                converged = true;
+                if (!currentTopologyContext.equals(nextTopologyContext)) {
+                    converged = false;
+                    LOGGER.info("Iibdp: Topologies changed in this iteration");
+                }
+                Optional<String> reachabilityDiff =
+                        compareTracks(currentTrackReachabilityResults, nextTrackReachabilityResults);
+                Optional<String> routesDiff = compareTracks(currentTrackRouteResults, nextTrackRouteResults);
+                if (reachabilityDiff.isPresent() || routesDiff.isPresent()) {
+                    converged = false;
+                    LOGGER.info("Iibdp: Tracks changed in this iteration");
+                    reachabilityDiff.ifPresent(s -> LOGGER.info("Iibdp: Reachability tracks: {}", s));
+                    routesDiff.ifPresent(s -> LOGGER.info("Iibdp: Route tracks: {}", s));
+                }
+                if (!currentIpOwners.equals(nextIpOwners)) {
+                    converged = false;
+                    LOGGER.info("Iibdp: IP ownership changed in this iteration");
+                }
+                currentTopologyContext = nextTopologyContext;
+                currentTrackReachabilityResults = nextTrackReachabilityResults;
+                currentTrackRouteResults = nextTrackRouteResults;
+                currentIpOwners = nextIpOwners;
+            }
+
+            if (!converged) {
+                LOGGER.error(
+                        "Iibdp: Could not reach a fixed point topology in {} iterations", MAX_TOPOLOGY_ITERATIONS);
+                throw new BdpOscillationException(
+                        String.format(
+                                "Iibdp: Could not reach a fixed point topology in %d iterations", MAX_TOPOLOGY_ITERATIONS));
+            }
+
+
+
+            // 3. Bring up the interface again
+            IibdpEngine.modifyInterfaceStatus(configurations, intfUp, false);
+
+
+
+            // 4. Continue computing with the link up
+            LOGGER.info("Iibdp: Building link up topology out of configurations");
+            ((TopologyProviderCustomConfigs) topologyProvider).setConfigurations(configurations);
+            initialTopologyContext = null; // Free the old instances created in step 2
+            initialTopologyContext =
+                    TopologyContext.builder()
+                            .setIpsecTopology(topologyProvider.getInitialIpsecTopology(snapshot))
+                            .setIsisTopology(
+                                    IsisTopology.initIsisTopology(
+                                            configurations, topologyProvider.getInitialLayer3Topology(snapshot)))
+                            .setLayer3Topology(topologyProvider.getInitialLayer3Topology(snapshot))
+                            .setLayer1Topologies(topologyProvider.getLayer1Topologies(snapshot))
+                            .setL3Adjacencies(topologyProvider.getInitialL3Adjacencies(snapshot))
+                            .setOspfTopology(topologyProvider.getInitialOspfTopology(snapshot))
+                            .setTunnelTopology(topologyProvider.getInitialTunnelTopology(snapshot))
+                            .build();
+
+            // SANITY CHECK: Look at current layer 3 topology!
+//            Topology l3Topo = initialTopologyContext.getLayer3Topology();
+//            SortedSet<Edge> l3Edges = l3Topo.sortedEdges();
+//            System.out.println("Within initialLayer3Topology in IibdpEngine: ");
+//            for (Edge edge : l3Edges) {
+//                System.out.println("Edge tail node: " + edge.getNode1() + " intf: " + edge.getInt1());
+//            }
+
+            initialIpOwners = null;
+            initialIpOwners = ((TopologyProviderCustomConfigs) topologyProvider).getCustomIpOwners(snapshot);
+
+            // Instead of modifying in place, create a new one to let the lambda expression happy
+            Map<Ip, Map<String, Set<String>>> secondaryIpVrfOwners = initialIpOwners.getIpVrfOwners();
+
+            computeIgpDataPlane(nodes, vrs, initialTopologyContext, answerElement);
+
+            LOGGER.info("Iibdp: Moving entire main RIB into delta; Preparing external BGP advertisements");
+            vrs.parallelStream()
+                    .forEach(
+                            vr -> vr.initForEgpComputationBeforeTopologyLoop(externalAdverts, secondaryIpVrfOwners));
+
+            /*
+             * Perform a fixed-point computation, in which every round the topology is updated based
+             * on what we have learned in the previous round.
+             */
+            // Since the topology iterations are incremental, clear fields that are pruned to get the real
+            // topology. They are not actually yet included in topologies.
+            initialTopologyContextWithHighLevelCleared = null;
+            initialTopologyContextWithHighLevelCleared =
+                    initialTopologyContext.toBuilder()
+                            .setIpsecTopology(IpsecTopology.EMPTY)
+                            .setTunnelTopology(TunnelTopology.EMPTY)
+                            .setVxlanTopology(VxlanTopology.EMPTY)
+                            .build();
+            currentDataplane = null;
+            currentDataplane =
+                    nextDataplane(initialTopologyContextWithHighLevelCleared, nodes, vrs, initialIpOwners);
+
+            currentTopologyContext = null;
+            currentTopologyContext =
+                    nextTopologyContext(
+                            initialTopologyContextWithHighLevelCleared,
+                            currentDataplane,
+                            initialTopologyContext,
+                            networkConfigurations,
+                            initialIpVrfOwners);
+
+            trackRoutesByHostname = null;
+            trackRoutesByHostname =
+                    trackRoutesByHostname = collectTrackRoutes(configurations);
+            trackReachabilitiesByHostname = null;
+            trackReachabilitiesByHostname =
+                    collectTrackReachabilities(configurations);
+            currentTrackReachabilityResults = null;
+            currentTrackReachabilityResults =
+                    nextTrackReachabilityResults(
+                            currentDataplane,
+                            currentTopologyContext,
+                            configurations,
+                            trackReachabilitiesByHostname);
+            currentTrackRouteResults = null;
+            currentTrackRouteResults =
+                    nextTrackRouteResults(trackRoutesByHostname, nodes);
+            currentTrackMethodEvaluatorProvider = null;
+            currentTrackMethodEvaluatorProvider =
+                    nextTrackMethodEvaluatorProvider(currentTrackReachabilityResults, currentTrackRouteResults);
+            currentIpOwners = null;
+            currentIpOwners =
+                    new DataPlaneIpOwners(
+                            configurations,
+                            currentTopologyContext.getL3Adjacencies(),
+                            currentTrackMethodEvaluatorProvider);
+            topologyIterations = 0;
+            converged = false;
+            while (!converged && topologyIterations++ < MAX_TOPOLOGY_ITERATIONS) {
+                LOGGER.info("Iibdp: Starting topology iteration {}", topologyIterations);
+                boolean isOscillating =
+                        computeNonMonotonicPortionOfDataPlane(
+                                nodes,
+                                vrs,
+                                answerElement,
+                                currentTopologyContext,
+                                initialTopologyContext.getLayer3Topology(),
+                                currentIpOwners,
+                                networkConfigurations,
+                                currentTrackMethodEvaluatorProvider);
+                if (isOscillating) {
+                    // If we are oscillating here, network has no stable solution.
+                    LOGGER.error("Iibdp: Network has no stable solution");
+                    throw new BdpOscillationException("Iibdp: Network has no stable solution");
+                }
+
+                updateLayer3Vnis(vrs);
+                currentDataplane = null; // free the old one
+                currentDataplane = nextDataplane(currentTopologyContext, nodes, vrs, currentIpOwners);
+                TopologyContext nextTopologyContext =
+                        nextTopologyContext(
+                                currentTopologyContext,
+                                currentDataplane,
+                                initialTopologyContext,
+                                networkConfigurations,
+                                currentIpOwners.getIpVrfOwners());
+
+                Table<String, TrackReachability, Boolean> nextTrackReachabilityResults =
+                        nextTrackReachabilityResults(
+                                currentDataplane,
+                                currentTopologyContext,
+                                configurations,
+                                trackReachabilitiesByHostname);
+                Table<String, TrackRoute, Boolean> nextTrackRouteResults =
+                        nextTrackRouteResults(trackRoutesByHostname, nodes);
+                currentTrackMethodEvaluatorProvider =
+                        nextTrackMethodEvaluatorProvider(nextTrackReachabilityResults, nextTrackRouteResults);
+                DataPlaneIpOwners nextIpOwners =
+                        new DataPlaneIpOwners(
+                                configurations,
+                                nextTopologyContext.getL3Adjacencies(),
+                                currentTrackMethodEvaluatorProvider);
+                converged = true;
+                if (!currentTopologyContext.equals(nextTopologyContext)) {
+                    converged = false;
+                    LOGGER.info("Iibdp: Topologies changed in this iteration");
+                }
+                Optional<String> reachabilityDiff =
+                        compareTracks(currentTrackReachabilityResults, nextTrackReachabilityResults);
+                Optional<String> routesDiff = compareTracks(currentTrackRouteResults, nextTrackRouteResults);
+                if (reachabilityDiff.isPresent() || routesDiff.isPresent()) {
+                    converged = false;
+                    LOGGER.info("Iibdp: Tracks changed in this iteration");
+                    reachabilityDiff.ifPresent(s -> LOGGER.info("Iibdp: Reachability tracks: {}", s));
+                    routesDiff.ifPresent(s -> LOGGER.info("Iibdp: Route tracks: {}", s));
+                }
+                if (!currentIpOwners.equals(nextIpOwners)) {
+                    converged = false;
+                    LOGGER.info("Iibdp: IP ownership changed in this iteration");
+                }
+                currentTopologyContext = nextTopologyContext;
+                currentTrackReachabilityResults = nextTrackReachabilityResults;
+                currentTrackRouteResults = nextTrackRouteResults;
+                currentIpOwners = nextIpOwners;
+            }
+
+            if (!converged) {
+                LOGGER.error(
+                        "Iibdp: Could not reach a fixed point topology in {} iterations", MAX_TOPOLOGY_ITERATIONS);
+                throw new BdpOscillationException(
+                        String.format(
+                                "Iibdp: Could not reach a fixed point topology in %d iterations", MAX_TOPOLOGY_ITERATIONS));
+            }
+
+
+
+            // 5. Finalize and add result to map
+            String hash = Integer.toHexString(computeIterationHashCode(vrs));
+            LOGGER.info("Iibdp: Generated data plane with hash: " + hash);
+//            System.out.println("Iibdp: Generated data plane with hash: " + hash);
+            answerElement.setVersion(BatfishVersion.getVersionStatic());
+            IncrementalDataPlane finalDataplane =
+                    IncrementalDataPlane.builder()
+                            .setNodes(nodes)
+                            .setPartialDataplane(currentDataplane)
+                            .build();
+            ComputeDataPlaneResult answer = new IbdpResult( // Hash is already map's key, so IbdpResult is good enough
+                    answerElement,
+                    finalDataplane,
+                    currentTopologyContext,
+                    nodes);
+
+            // Keep dataplanes with distinct hash
+            if (hashToResult.putIfAbsent(hash, answer) == null) {
+                System.out.println("Iibdp: New state detected with hash: " + hash);
+                System.out.println("Iibdp: Caused by resetting " + intfUp._nodeName + " " + intfUp._interfaceName);
+            }
+
+            // Check if no more interfaces need to be reset
+            if (intfList.isEmpty()) {
+                LOGGER.info("Iibdp: Computation of all link resets complete.");
+                return hashToResult;
+            }
+        }
+    }
+
     private @Nonnull Table<String, TrackRoute, Boolean> nextTrackRouteResults(
             Map<String, Collection<TrackRoute>> trackRoutesByHostname, SortedMap<String, Node> nodes) {
         ImmutableTable.Builder<String, TrackRoute, Boolean> trackRouteResults =

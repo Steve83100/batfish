@@ -1,5 +1,6 @@
 package org.batfish.dataplane.ibdp;
 
+import static java.util.stream.Collectors.toCollection;
 import static java.util.stream.Collectors.toList;
 
 import com.google.auto.service.AutoService;
@@ -109,6 +110,8 @@ public final class IibdpPlugin extends DataPlanePlugin {
                 .map(edge -> new InterfaceModification(edge.getNode1(), edge.getInt1(), true))
                 .collect(toList());
 
+        assert !(intfList.isEmpty()) : "Iibdp Plugin: No interfaces detected. Cannot proceed computation.";
+
         LOGGER.info("Iibdp Plugin: Prepared " + intfList.size() + " interfaces");
         System.out.println("Iibdp Plugin: Prepared " + intfList.size() + " interfaces");
 
@@ -138,7 +141,6 @@ public final class IibdpPlugin extends DataPlanePlugin {
             }
 
             LOGGER.info("Iibdp Plugin: Cold starting Iibdp engine on new permutation...");
-            System.out.println("Iibdp Plugin: Cold starting Iibdp engine on new permutation...");
             IbdpResultWithHash answer =
                     _engine.incrementalComputeDataPlaneWithHash(
                             snapshot,
@@ -147,8 +149,12 @@ public final class IibdpPlugin extends DataPlanePlugin {
                             externalAdverts,
                             intfPerm);
             LOGGER.info("Iibdp Plugin: Generated data plane with hash: " + answer.getHash());
-            System.out.println("Iibdp Plugin: Generated data plane with hash: " + answer.getHash());
-            hashToResult.putIfAbsent(answer.getHash(), answer); // Keep dataplanes with distinct hash
+//            System.out.println("Iibdp Plugin: Generated data plane with hash: " + answer.getHash());
+
+            // Keep dataplanes with distinct hash
+            if (hashToResult.putIfAbsent(answer.getHash(), answer) == null) {
+                System.out.println("Iibdp Plugin: Discovered new data plane with hash: " + answer.getHash());
+            }
         }
         System.out.println("---------------------------------------------------------------------------");
         System.out.println("Iibdp Plugin: Completed all data planes. Number of distinct results: " + hashToResult.size());
@@ -175,49 +181,30 @@ public final class IibdpPlugin extends DataPlanePlugin {
 
         // Retrieve all layer 3 interfaces from topology. Only keep interface on one side of each edge
         Set<Set<String>> seenNodePairs = new HashSet<>();
-        List<InterfaceModification> intfList = initialLayer3Topology.sortedEdges().stream()
+        LinkedList<InterfaceModification> intfList = initialLayer3Topology.sortedEdges().stream()
                 // With dual edges, only use tail side of one single edge for now, and filter out the other edge
                 .filter(edge -> {
                     Set<String> nodePair = Set.of(edge.getNode1(), edge.getNode2());
                     return seenNodePairs.add(nodePair);
                 })
                 .map(edge -> new InterfaceModification(edge.getNode1(), edge.getInt1(), true))
-                .collect(toList());
+                .collect(toCollection(LinkedList::new));
+
+        assert !(intfList.isEmpty()) : "Iibdp Plugin: No interfaces detected. Cannot proceed computation.";
 
         LOGGER.info("Iibdp Plugin: Prepared " + intfList.size() + " interfaces");
         System.out.println("Iibdp Plugin: Prepared " + intfList.size() + " interfaces");
-
-        Map<String, ComputeDataPlaneResult> hashToResult = new TreeMap<>();
         System.out.println("Iibdp Plugin: Preparation finished. Starting link reset trials...");
         System.out.println("---------------------------------------------------------------------------");
 
-        // Queue holding intf ups. Will only hold one intf up at a time
-        Queue<InterfaceModification> intfMods = new LinkedList<>();
-
-        // Each intfMod stores a modification of interface, compute the data plane when resetting this interface
-        for (InterfaceModification intfMod : intfList) {
-            // Edit configuration to disable this specific interfaces at first
-            InterfaceModification disableIntf = new InterfaceModification(
-                    intfMod._nodeName, intfMod._interfaceName, false
-            );
-            IibdpEngine.modifyInterfaceStatus(configurations, disableIntf, false);
-
-            // Add this intf up to queue. It will be popped out during engine computation
-            intfMods.add(intfMod);
-
-            LOGGER.info("Iibdp Plugin: Starting Iibdp engine on new permutation...");
-            System.out.println("Iibdp Plugin: Starting Iibdp engine on new permutation...");
-            IbdpResultWithHash answer =
-                    _engine.incrementalComputeDataPlaneWithHash(
-                            snapshot,
-                            configurations,
-                            topologyProvider,
-                            externalAdverts,
-                            intfMods);
-            LOGGER.info("Iibdp Plugin: Generated data plane with hash: " + answer.getHash());
-            System.out.println("Iibdp Plugin: Generated data plane with hash: " + answer.getHash());
-            hashToResult.putIfAbsent(answer.getHash(), answer); // Keep dataplanes with distinct hash
-        }
+        // For given interfaces, reset them one by one during computation, and detect inconsistencies
+        Map<String, ComputeDataPlaneResult> hashToResult =
+                _engine.incrementalComputeDataPlaneWithResets(
+                        snapshot,
+                        configurations,
+                        topologyProvider,
+                        externalAdverts,
+                        intfList);
 
         System.out.println("---------------------------------------------------------------------------");
         System.out.println("Iibdp Plugin: Completed all reset trials. Number of distinct results: " + hashToResult.size());
