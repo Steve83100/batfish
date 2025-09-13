@@ -5,7 +5,7 @@ import static org.batfish.utils.BatfishUtils.getBatfishFromTestrigText;
 
 import java.nio.file.Path;
 import java.util.Arrays;
-//import java.util.ArrayList;
+// import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedList;
 import java.util.Map;
@@ -18,8 +18,8 @@ import org.apache.logging.log4j.Logger;
 import org.batfish.common.BfConsts;
 import org.batfish.datamodel.Configuration;
 import org.batfish.datamodel.DataPlane;
-//import org.batfish.datamodel.answers.AnswerElement;
-//import org.batfish.datamodel.questions.Question;
+// import org.batfish.datamodel.answers.AnswerElement;
+// import org.batfish.datamodel.questions.Question;
 import org.batfish.dataplane.ibdp.InterfaceModification;
 import org.batfish.main.Batfish;
 import org.batfish.utils.BatfishUtils;
@@ -54,7 +54,7 @@ public class BfRunner {
             .setSnapshotNameSuffix("bf")
             .setConfigurationPaths(files)
             .setLayer1Topology(configs.getParent().resolve(BfConsts.RELPATH_L1_TOPOLOGY_PATH))
-//            .setDistributed(false)
+            //            .setDistributed(false)
             .build();
     Pair<Path, Batfish> pair = getBatfishFromTestrigText(param);
     snapshotDir = pair.getKey();
@@ -66,29 +66,32 @@ public class BfRunner {
     ResultPrinter.printSnapshotFibs(dp, snapshotDir);
   }
 
-  /**
-   * Normally compute a data plane
-   */
+  /** Normally compute a data plane */
   public void computeDataPlane() {
     parse();
     assert batfish != null;
     batfish.computeDataPlane(batfish.getSnapshot());
-    ResultPrinter.printSnapshotResult(batfish, snapshotDir, true, true, true, true, true, true, true);
+    ResultPrinter.printSnapshotResult(
+        batfish, snapshotDir, true, true, true, true, true, true, true);
   }
 
   /**
-   * Uses IIBDP to compute a data plane incrementally by iteratively adding the specified interface modifications
+   * Uses IIBDP to compute a data plane incrementally by iteratively adding the specified interface
+   * modifications
+   *
    * @param intfMods Queue of interface modifications to be made
    */
   public void computeDataPlaneWithIntfMods(Queue<InterfaceModification> intfMods) {
     parse();
     assert batfish != null;
     batfish.computeDataPlaneWithIntfMods(batfish.getSnapshot(), intfMods);
-    ResultPrinter.printSnapshotResult(batfish, snapshotDir, true, true, true, true, true, true, true);
+    ResultPrinter.printSnapshotResult(
+        batfish, snapshotDir, true, true, true, true, true, true, true);
   }
 
   /**
-   * Parses, and uses topology provider to extract all interfaces (on one side of link) from configurations;
+   * Parses, and uses topology provider to extract all interfaces (on one side of link) from
+   * configurations;
    */
   public List<InterfaceModification> parseAndLoadIntfs() {
     parse();
@@ -97,26 +100,29 @@ public class BfRunner {
   }
 
   /**
-   * Uses IIBDP to compute the possibly different convergence states produced by enabling links in different orders;
-   * Will try full permutation of all links by default;
-   * TODO: Merge with parseAndLoadIntfs() to avoid parsing twice!!
+   * Uses IIBDP to compute the possibly different convergence states produced by enabling links in
+   * different orders; Will try full permutation of all links by default; TODO: Merge with
+   * parseAndLoadIntfs() to avoid parsing twice!!
    */
   public void computeDataPlaneWithLinkPerms() {
     parse();
     assert batfish != null;
     batfish.computeDataPlaneWithLinkPerms(batfish.getSnapshot());
-    ResultPrinter.printSnapshotResultWithMultiDataPlane(batfish, snapshotDir, true, true, true, true, true, true, true);
+    ResultPrinter.printSnapshotResultWithMultiDataPlane(
+        batfish, snapshotDir, true, true, true, true, true, true, true);
   }
 
   /**
-   * Uses IIBDP to compute the possibly different convergence states produced by resetting certain links;
-   * Will try resetting all links once at a time by default
+   * Uses IIBDP to compute the possibly different convergence states produced by resetting certain
+   * links; Will try resetting all links once at a time by default
    */
-  public void computeDataPlaneWithLinkResets() {
+  public void computeDataPlaneWithLinkResets(boolean continuous) {
     parse();
     assert batfish != null;
-    batfish.computeDataPlaneWithLinkResets(batfish.getSnapshot());
-    ResultPrinter.printSnapshotResultWithMultiDataPlane(batfish, snapshotDir, true, true, true, true, true, true, true);
+    batfish.computeDataPlaneWithLinkResets(batfish.getSnapshot(), continuous);
+    ResultPrinter.printSnapshotResultWithMultiDataPlane(
+        batfish, snapshotDir, true, true, true, true, true, true, true);
+    ResultPrinter.outputDifference(snapshotDir, continuous);
   }
 
   public Map<String, Configuration> getConfigurations() {
@@ -128,18 +134,20 @@ public class BfRunner {
   }
 
   public static void main(String... args) {
-    String network = "bgpWedgies/figure1/full";
+    String network = "bgpWedgies/figure3";
     Queue<InterfaceModification> intfMods = new LinkedList<>();
     BfRunner test = new BfRunner(network);
 
-//    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", true));
-//    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", true));
-//    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", false));
-//    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", false));
-//    test.computeDataPlaneWithIntfMods(intfMods);
+    //    test.computeDataPlane();
 
-//    test.computeDataPlaneWithLinkPerms();
+    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", false));
+    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", true));
+    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", false));
+    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", true));
+    //    test.computeDataPlaneWithIntfMods(intfMods);
 
-    test.computeDataPlaneWithLinkResets();
+//        test.computeDataPlaneWithLinkPerms();
+
+    test.computeDataPlaneWithLinkResets(true);
   }
 }

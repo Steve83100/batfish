@@ -646,17 +646,18 @@ final class BgpRoutingProcess implements RoutingProcess<BgpTopology, BgpRoute<?,
     }
 
     // Compute edges that went down
-    Set<EdgeId> unicastEdgesWentDown = Sets.difference(
+    Set<EdgeId> unicastEdgesWentDown =
+        Sets.difference(
             getEdgeIdStream(
                     oldTopology.getGraph(),
                     BgpPeerConfig::getIpv4UnicastAddressFamily,
                     Type.IPV4_UNICAST)
-                    .collect(ImmutableSet.toImmutableSet()),
+                .collect(ImmutableSet.toImmutableSet()),
             getEdgeIdStream(
                     topology.getGraph(),
                     BgpPeerConfig::getIpv4UnicastAddressFamily,
                     Type.IPV4_UNICAST)
-                    .collect(ImmutableSet.toImmutableSet()));
+                .collect(ImmutableSet.toImmutableSet()));
 
     // Remove routes from neighbors that went down
     unicastEdgesWentDown.forEach(edgeId -> removeRoutesFromSession(edgeId));
@@ -666,66 +667,74 @@ final class BgpRoutingProcess implements RoutingProcess<BgpTopology, BgpRoute<?,
 
   public void removeRoutesFromSession(EdgeId edgeId) {
     BgpPeerConfigId configId = edgeId.head(); // Get the remote side of this session
-    Prefix sessionPrefix = configId.getRemotePeerPrefix(); // Session's IP. Only regular sessions have this
-    String sessionInterface = configId.getPeerInterface(); // Session's interface. Only unnumbered sessions have this
+    Prefix sessionPrefix =
+        configId.getRemotePeerPrefix(); // Session's IP. Only regular sessions have this
+    String sessionInterface =
+        configId.getPeerInterface(); // Session's interface. Only unnumbered sessions have this
 
     // Within eBGP RIB, filter out routes that was received from this session
-    Set<Bgpv4Route> routesToRemove = _ebgpv4Rib.getAllRoutes().stream()
-            .filter(route -> {
-                      ReceivedFrom receivedFrom = route.getReceivedFrom();
+    Set<Bgpv4Route> routesToRemove =
+        _ebgpv4Rib.getAllRoutes().stream()
+            .filter(
+                route -> {
+                  ReceivedFrom receivedFrom = route.getReceivedFrom();
 
-                      if (receivedFrom instanceof ReceivedFromIp) { // Route received from a regular BGP peer session
-                        Ip routeIp = ((ReceivedFromIp) receivedFrom).getIp();
-                        // If this route is received from an IP inside sessionPrefix, remove it
-                        return sessionPrefix.containsIp(routeIp);
-                      }
+                  if (receivedFrom
+                      instanceof ReceivedFromIp) { // Route received from a regular BGP peer session
+                    Ip routeIp = ((ReceivedFromIp) receivedFrom).getIp();
+                    // If this route is received from an IP inside sessionPrefix, remove it
+                    return sessionPrefix.containsIp(routeIp);
+                  } else if (receivedFrom
+                      instanceof
+                      ReceivedFromInterface) { // Route received from an unnumbered session
+                    String routeInterface = ((ReceivedFromInterface) receivedFrom).getInterface();
+                    // If this route is received from the unnumbered session's interface, remove it
+                    return sessionInterface.equals(routeInterface);
+                  }
 
-                      else if (receivedFrom instanceof ReceivedFromInterface){ // Route received from an unnumbered session
-                        String routeInterface = ((ReceivedFromInterface) receivedFrom).getInterface();
-                        // If this route is received from the unnumbered session's interface, remove it
-                        return sessionInterface.equals(routeInterface);
-                      }
-
-                      return false; // Don't remove locally originated routes
-                    }
-            )
+                  return false; // Don't remove locally originated routes
+                })
             .collect(ImmutableSet.toImmutableSet());
 
-//    System.out.println(_hostname + ": Number of routes to remove: " + routesToRemove.size());
+    //    System.out.println(_hostname + ": Number of routes to remove: " + routesToRemove.size());
 
     // Remove from eBGP RIB
-    routesToRemove.forEach(route -> {
-      processRemoveInEbgpOrIbgpRib(route, true); // true for eBGP
-      processRemoveInBgpRib(route);
-    });
+    routesToRemove.forEach(
+        route -> {
+          processRemoveInEbgpOrIbgpRib(route, true); // true for eBGP
+          processRemoveInBgpRib(route);
+        });
 
     // Similar filtering for iBGP RIB
-    Set<Bgpv4Route> ibgpRoutesToRemove = _ibgpv4Rib.getRoutes().stream()
-            .filter(route -> {
-                      ReceivedFrom rf = route.getReceivedFrom();
+    Set<Bgpv4Route> ibgpRoutesToRemove =
+        _ibgpv4Rib.getRoutes().stream()
+            .filter(
+                route -> {
+                  ReceivedFrom rf = route.getReceivedFrom();
 
-                      if (rf instanceof ReceivedFromIp) { // Route received from a regular BGP peer session
-                        Ip routeIp = ((ReceivedFromIp) rf).getIp();
-                        // If this route is received from an IP inside sessionPrefix, remove it
-                        return sessionPrefix.containsIp(routeIp);
-                      }
+                  if (rf
+                      instanceof ReceivedFromIp) { // Route received from a regular BGP peer session
+                    Ip routeIp = ((ReceivedFromIp) rf).getIp();
+                    // If this route is received from an IP inside sessionPrefix, remove it
+                    return sessionPrefix.containsIp(routeIp);
+                  } else if (rf
+                      instanceof
+                      ReceivedFromInterface) { // Route received from an unnumbered session
+                    String routeInterface = ((ReceivedFromInterface) rf).getInterface();
+                    // If this route is received from the unnumbered session's interface, remove it
+                    return sessionInterface.equals(routeInterface);
+                  }
 
-                      else if (rf instanceof ReceivedFromInterface){ // Route received from an unnumbered session
-                        String routeInterface = ((ReceivedFromInterface) rf).getInterface();
-                        // If this route is received from the unnumbered session's interface, remove it
-                        return sessionInterface.equals(routeInterface);
-                      }
-
-                      return false; // Don't remove locally originated routes
-                    }
-            )
+                  return false; // Don't remove locally originated routes
+                })
             .collect(ImmutableSet.toImmutableSet());
 
     // Remove from iBGP RIB
-    ibgpRoutesToRemove.forEach(route -> {
-      processRemoveInEbgpOrIbgpRib(route, false); // false for iBGP
-      processRemoveInBgpRib(route);
-    });
+    ibgpRoutesToRemove.forEach(
+        route -> {
+          processRemoveInEbgpOrIbgpRib(route, false); // false for iBGP
+          processRemoveInBgpRib(route);
+        });
   }
 
   @Override

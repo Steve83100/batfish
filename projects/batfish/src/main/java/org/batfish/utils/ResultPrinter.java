@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.collect.Table;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
@@ -35,7 +36,7 @@ import org.batfish.datamodel.Topology;
 import org.batfish.datamodel.Vrf;
 import org.batfish.datamodel.bgp.BgpTopology;
 import org.batfish.dataplane.ibdp.VirtualRouter;
-//import org.batfish.dataplane.ibdp.VirtualRouterWrapper;
+// import org.batfish.dataplane.ibdp.VirtualRouterWrapper;
 import org.batfish.main.Batfish;
 
 public class ResultPrinter {
@@ -52,6 +53,7 @@ public class ResultPrinter {
       boolean printFibs,
       boolean printPrefixes) {
     try {
+      System.out.println("ResultPrinter: Extracting dataplane into txt files");
       Path tmp = outputSnapshot.resolve("output").resolve("resultPrinterOutput");
 
       BufferedWriter bw;
@@ -316,31 +318,31 @@ public class ResultPrinter {
     return prefixes.stream().sorted().collect(Collectors.toList());
   }
 
-//  public static <R extends AbstractRouteDecorator> void writeVrfMainRibToDisk(
-//      VirtualRouterWrapper vr, Set<R> routes) {
-//    Path path =
-//        vr.getNodeWrapper()
-//            .getWorker()
-//            .getSnapshotDir()
-//            .resolve("output")
-//            .resolve("dan")
-//            .resolve("ribs")
-//            .resolve(getFullVrfName(vr));
-//    //    writeRoutesToDisk(path, routes, false);
-//  }
-//
-//  public static <R extends AbstractRouteDecorator> void writeBgpRibToDisk(
-//      VirtualRouterWrapper vr, Set<R> routes) {
-//    Path path =
-//        vr.getNodeWrapper()
-//            .getWorker()
-//            .getSnapshotDir()
-//            .resolve("output")
-//            .resolve("dan")
-//            .resolve("bgp-ribs")
-//            .resolve(getFullVrfName(vr));
-//    //    writeRoutesToDisk(path, routes, true);
-//  }
+  //  public static <R extends AbstractRouteDecorator> void writeVrfMainRibToDisk(
+  //      VirtualRouterWrapper vr, Set<R> routes) {
+  //    Path path =
+  //        vr.getNodeWrapper()
+  //            .getWorker()
+  //            .getSnapshotDir()
+  //            .resolve("output")
+  //            .resolve("dan")
+  //            .resolve("ribs")
+  //            .resolve(getFullVrfName(vr));
+  //    //    writeRoutesToDisk(path, routes, false);
+  //  }
+  //
+  //  public static <R extends AbstractRouteDecorator> void writeBgpRibToDisk(
+  //      VirtualRouterWrapper vr, Set<R> routes) {
+  //    Path path =
+  //        vr.getNodeWrapper()
+  //            .getWorker()
+  //            .getSnapshotDir()
+  //            .resolve("output")
+  //            .resolve("dan")
+  //            .resolve("bgp-ribs")
+  //            .resolve(getFullVrfName(vr));
+  //    //    writeRoutesToDisk(path, routes, true);
+  //  }
 
   public static <R extends AbstractRouteDecorator> void writeRoutesToDisk(
       Path path, Collection<R> routes, boolean debug) {
@@ -379,20 +381,19 @@ public class ResultPrinter {
     return vr.getConfiguration().getHostname() + "-" + vr.getName();
   }
 
-  /**
-   * Prints results, including multiple data planes
-   */
+  /** Prints results, including multiple data planes */
   public static void printSnapshotResultWithMultiDataPlane(
-          Batfish batfish,
-          Path outputSnapshot,
-          boolean printViConfigs,
-          boolean printL3Topology,
-          boolean printBgpTopology,
-          boolean printRibs,
-          boolean printBgpRibs,
-          boolean printFibs,
-          boolean printPrefixes) {
+      Batfish batfish,
+      Path outputSnapshot,
+      boolean printViConfigs,
+      boolean printL3Topology,
+      boolean printBgpTopology,
+      boolean printRibs,
+      boolean printBgpRibs,
+      boolean printFibs,
+      boolean printPrefixes) {
     try {
+      System.out.println("ResultPrinter: Extracting multi-dataplanes into txt files");
       Path tmp = outputSnapshot.resolve("output").resolve("resultPrinterOutput");
 
       BufferedWriter bw;
@@ -432,9 +433,11 @@ public class ResultPrinter {
           Map<String, List<String>> ribs = hashAndRib.getValue();
 
           for (Map.Entry<String, List<String>> entry : ribs.entrySet()) {
-            bw = getBufferedWriter(tmp.resolve("ribs")
-                    .resolve(hash) // Hash of this data plane
-                    .resolve(entry.getKey() + ".txt")); // Name of the host
+            bw =
+                getBufferedWriter(
+                    tmp.resolve("ribs")
+                        .resolve(hash) // Hash of this data plane
+                        .resolve(entry.getKey() + ".txt")); // Name of the host
             bw.write(String.join("\n", entry.getValue()));
             bw.close();
           }
@@ -443,13 +446,14 @@ public class ResultPrinter {
 
       if (printBgpRibs) {
         Map<String, Map<String, List<String>>> hashToBgpRibs = printMultiBgpRib(batfish);
-        for (Map.Entry<String, Map<String, List<String>>> hashAndBgpRib : hashToBgpRibs.entrySet()) {
+        for (Map.Entry<String, Map<String, List<String>>> hashAndBgpRib :
+            hashToBgpRibs.entrySet()) {
           String hash = hashAndBgpRib.getKey();
           Map<String, List<String>> bgpRibs = hashAndBgpRib.getValue();
           for (Map.Entry<String, List<String>> entry : bgpRibs.entrySet()) {
-            bw = getBufferedWriter(tmp.resolve("bgpRibs")
-                    .resolve(hash)
-                    .resolve(entry.getKey() + ".txt"));
+            bw =
+                getBufferedWriter(
+                    tmp.resolve("bgpRibs").resolve(hash).resolve(entry.getKey() + ".txt"));
             bw.write(String.join("\n", entry.getValue()));
             bw.close();
           }
@@ -462,9 +466,9 @@ public class ResultPrinter {
           String hash = hashAndFib.getKey();
           Map<String, List<String>> fibs = hashAndFib.getValue();
           for (Map.Entry<String, List<String>> entry : fibs.entrySet()) {
-            bw = getBufferedWriter(tmp.resolve("fibs")
-                    .resolve(hash)
-                    .resolve(entry.getKey() + ".txt"));
+            bw =
+                getBufferedWriter(
+                    tmp.resolve("fibs").resolve(hash).resolve(entry.getKey() + ".txt"));
             bw.write(String.join("\n", entry.getValue()));
             bw.close();
           }
@@ -503,9 +507,9 @@ public class ResultPrinter {
         List<String> list = new LinkedList<>();
         list.add(vrfname + ":\n");
         list.addAll(
-                cell.getValue().getRoutes().stream()
-                        .map(AbstractRoute::toString)
-                        .collect(Collectors.toList()));
+            cell.getValue().getRoutes().stream()
+                .map(AbstractRoute::toString)
+                .collect(Collectors.toList()));
         list.add("\n");
         map.computeIfAbsent(hostname, x -> new LinkedList<>()).addAll(list);
       }
@@ -537,7 +541,8 @@ public class ResultPrinter {
         for (Map.Entry<String, Set<Bgpv4Route>> e2 : e1.getValue().entrySet()) {
           String vrfName = e2.getKey();
           list.add(vrfName);
-          list.addAll(e2.getValue().stream().map(Bgpv4Route::toString).collect(Collectors.toList()));
+          list.addAll(
+              e2.getValue().stream().map(Bgpv4Route::toString).collect(Collectors.toList()));
           list.add("\n");
         }
         map.put(hostName, list);
@@ -571,15 +576,15 @@ public class ResultPrinter {
           String vrfName = e2.getKey();
           list.add(vrfName);
           list.addAll(
-                  e2.getValue().allEntries().stream()
-                          .map(
-                                  entry ->
-                                          entry.getTopLevelRoute().getNetwork()
-                                                  + ",\t"
-                                                  + entry.getAction()
-                                                  + ",\t"
-                                                  + entry.getTopLevelRoute())
-                          .collect(Collectors.toList()));
+              e2.getValue().allEntries().stream()
+                  .map(
+                      entry ->
+                          entry.getTopLevelRoute().getNetwork()
+                              + ",\t"
+                              + entry.getAction()
+                              + ",\t"
+                              + entry.getTopLevelRoute())
+                  .collect(Collectors.toList()));
           list.add("\n");
         }
         map.put(hostName, list);
@@ -591,4 +596,35 @@ public class ResultPrinter {
     return hashToMap;
   }
 
+  public static void outputDifference(Path outputSnapshot, boolean comparisonSubject) {
+    if (comparisonSubject) {
+      outputDifferenceWithPrevious(outputSnapshot);
+    } else {
+      outputDifferenceWithInitial(outputSnapshot);
+    }
+  }
+
+  public static void outputDifferenceWithPrevious(Path outputSnapshot) {
+    System.out.println(
+        "ResultPrinter: Currently doesn't support comparing with previous dataplane.");
+  }
+
+  public static void outputDifferenceWithInitial(Path outputSnapshot) {
+    System.out.println("ResultPrinter: Comparing dataplane files with initial dataplane");
+    Path fibsPath = outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("fibs");
+    FileDiffComparator comparator = new FileDiffComparator();
+
+    Path initialPath = fibsPath.resolve("_initial");
+    try {
+      for (Path current : Files.newDirectoryStream(fibsPath)) {
+        if (initialPath.equals(current)) {
+          continue;
+        }
+        comparator.compareFolder(initialPath, current);
+      }
+    } catch (IOException e) {
+      System.err.println("Error processing files: " + e.getMessage());
+      e.printStackTrace();
+    }
+  }
 }

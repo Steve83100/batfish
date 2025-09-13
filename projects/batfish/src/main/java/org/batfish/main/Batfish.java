@@ -63,6 +63,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -826,14 +827,14 @@ public class Batfish extends PluginConsumer implements IBatfish {
     hashToResult = null;
 
     // Save results including all data planes, indexed by hash
-    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer);
+    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer, false);
 
     LOGGER.info("Finished computation of full permutation successfully");
     System.out.println("Finished computation of full permutation successfully");
     return answerElement;
   }
 
-  public DataPlaneAnswerElement computeDataPlaneWithLinkResets(NetworkSnapshot snapshot) {
+  public DataPlaneAnswerElement computeDataPlaneWithLinkResets(NetworkSnapshot snapshot, boolean continuous) {
     _topologyProvider = new TopologyProviderCustomConfigs(this, _storage);
 
     LOGGER.info("Batfish: Starting computation with link resets");
@@ -847,7 +848,9 @@ public class Batfish extends PluginConsumer implements IBatfish {
     _settings.setDataplaneEngineName("iibdp");
     DataPlanePlugin dataPlanePlugin = getDataPlanePlugin();
     Map<String, ComputeDataPlaneResult> hashToResult =
-            ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithLinkResets(snapshot);
+            continuous
+                    ? ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithContinuousResets(snapshot)
+                    : ((IibdpPlugin) dataPlanePlugin).computeDataPlaneWithIsolatedResets(snapshot);
 
     // Answer element and topologies are assumed to be identical, so just use one of them
     ComputeDataPlaneResult defaultResult = null;
@@ -860,7 +863,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
     TopologyContainer topologyContainer = defaultResult._topologies;
 
     // Extract all data planes and their hash
-    Map<String, DataPlane> hashToDataPlane = new TreeMap<>();
+    Map<String, DataPlane> hashToDataPlane = new LinkedHashMap<>();
     for (Map.Entry<String, ComputeDataPlaneResult> entry : hashToResult.entrySet()){
       hashToDataPlane.put(entry.getKey(), entry.getValue()._dataPlane);
     }
@@ -868,11 +871,11 @@ public class Batfish extends PluginConsumer implements IBatfish {
     // Remove the giant result mapping
     hashToResult = null;
 
-    // Save results including all data planes, indexed by hash
-    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer);
+    // Save results including all data planes, indexed by their occurence order and hash
+    saveMultiDataPlane(snapshot, hashToDataPlane, topologyContainer, continuous);
 
-    LOGGER.info("Finished link reset trials successfully");
-    System.out.println("Finished of link reset trials successfully");
+    LOGGER.info("Batfish: Finished link reset trials successfully");
+    System.out.println("Batfish: Finished link reset trials successfully");
     return answerElement;
   }
 
@@ -930,11 +933,14 @@ public class Batfish extends PluginConsumer implements IBatfish {
     _logger.printElapsedTime();
   }
 
-  /**
-   * Save all data planes to storage. Use hash as their file paths.
-   */
+    /**
+     * Save all data planes to storage. Use hash as their file paths. Also include their occurence order if indexed
+     */
   private void saveMultiDataPlane(
-          NetworkSnapshot snapshot, Map<String, DataPlane> hashToDataPlane, TopologyContainer topologies) {
+          NetworkSnapshot snapshot,
+          Map<String, DataPlane> hashToDataPlane,
+          TopologyContainer topologies,
+          boolean indexed) {
     // Disable cache for now. Just use storage
 //    _cachedDataPlanes.put(snapshot, dataplane);
 
@@ -950,10 +956,17 @@ public class Batfish extends PluginConsumer implements IBatfish {
       _storage.storeOspfTopology(topologies.getOspfTopology(), snapshot);
       _storage.storeVxlanTopology(topologies.getVxlanTopology(), snapshot);
 
+      // Keep track of data plane's occurence order. Remember that initial dataplane was renamed and added here last
+      int occurenceOrder = 1;
+
       for (Map.Entry<String, DataPlane> entry : hashToDataPlane.entrySet()) {
-        String hash = entry.getKey();
+        String name = entry.getKey();
+        if (indexed && !(name.equals("_initial"))) {
+            name = Integer.toString(occurenceOrder) + "_" + name; // Append occurence order as its name prefix'
+            occurenceOrder++;
+        }
         DataPlane dataPlane = entry.getValue();
-        ((FileBasedStorage) _storage).storeHashedDataPlane(dataPlane, snapshot, hash);
+        ((FileBasedStorage) _storage).storeHashedDataPlane(dataPlane, snapshot, name);
       }
     } catch (IOException e) {
       throw new BatfishException("Failed to save multiple data planes", e);
