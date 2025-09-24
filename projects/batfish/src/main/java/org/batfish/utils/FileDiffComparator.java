@@ -103,7 +103,7 @@ public class FileDiffComparator {
     try {
       // Build diff command
       ProcessBuilder pb =
-          new ProcessBuilder("diff", "-U 0", referenceFile.toString(), currentFile.toString());
+          new ProcessBuilder("diff", "-U 1", referenceFile.toString(), currentFile.toString());
 
       Process process = pb.start();
 

@@ -122,7 +122,7 @@ public class BfRunner {
     batfish.computeDataPlaneWithLinkResets(batfish.getSnapshot(), continuous);
     ResultPrinter.printSnapshotResultWithMultiDataPlane(
         batfish, snapshotDir, true, true, true, true, true, true, true);
-    ResultPrinter.outputDifference(snapshotDir, continuous);
+    ResultPrinter.outputDifference(snapshotDir, continuous, true, true, true);
   }
 
   public Map<String, Configuration> getConfigurations() {
@@ -134,20 +134,17 @@ public class BfRunner {
   }
 
   public static void main(String... args) {
-    String network = "bgpWedgies/figure3";
+    String network = "additionalPathsDemo";
     Queue<InterfaceModification> intfMods = new LinkedList<>();
     BfRunner test = new BfRunner(network);
 
-    //    test.computeDataPlane();
+    test.computeDataPlane();
 
-    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", false));
-    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/0", true));
-    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", false));
-    //    intfMods.add(new InterfaceModification("r1", "FastEthernet0/1", true));
-    //    test.computeDataPlaneWithIntfMods(intfMods);
+    // intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", false));
+    // intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", true));
+    // test.computeDataPlaneWithIntfMods(intfMods);
 
-//        test.computeDataPlaneWithLinkPerms();
-
-    test.computeDataPlaneWithLinkResets(true);
+    // test.computeDataPlaneWithLinkPerms();
+    // test.computeDataPlaneWithLinkResets(false);
   }
 }

@@ -596,35 +596,81 @@ public class ResultPrinter {
     return hashToMap;
   }
 
-  public static void outputDifference(Path outputSnapshot, boolean comparisonSubject) {
+  public static void outputDifference(
+      Path outputSnapshot,
+      boolean comparisonSubject,
+      boolean compareRibs,
+      boolean compareBgpRibs,
+      boolean compareFibs) {
     if (comparisonSubject) {
-      outputDifferenceWithPrevious(outputSnapshot);
+      outputDifferenceWithPrevious(outputSnapshot, compareRibs, compareBgpRibs, compareFibs);
     } else {
-      outputDifferenceWithInitial(outputSnapshot);
+      outputDifferenceWithInitial(outputSnapshot, compareRibs, compareBgpRibs, compareFibs);
     }
   }
 
-  public static void outputDifferenceWithPrevious(Path outputSnapshot) {
+  public static void outputDifferenceWithPrevious(
+      Path outputSnapshot, boolean compareRibs, boolean compareBgpRibs, boolean compareFibs) {
     System.out.println(
         "ResultPrinter: Currently doesn't support comparing with previous dataplane.");
   }
 
-  public static void outputDifferenceWithInitial(Path outputSnapshot) {
+  public static void outputDifferenceWithInitial(
+      Path outputSnapshot, boolean compareRibs, boolean compareBgpRibs, boolean compareFibs) {
     System.out.println("ResultPrinter: Comparing dataplane files with initial dataplane");
-    Path fibsPath = outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("fibs");
-    FileDiffComparator comparator = new FileDiffComparator();
 
-    Path initialPath = fibsPath.resolve("_initial");
-    try {
-      for (Path current : Files.newDirectoryStream(fibsPath)) {
-        if (initialPath.equals(current)) {
-          continue;
+    if (compareRibs) {
+      try {
+        Path ribsPath =
+            outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("ribs");
+        FileDiffComparator comparator = new FileDiffComparator();
+        Path initialPath = ribsPath.resolve("_initial");
+        for (Path current : Files.newDirectoryStream(ribsPath)) {
+          if (initialPath.equals(current)) {
+            continue;
+          }
+          comparator.compareFolder(initialPath, current);
         }
-        comparator.compareFolder(initialPath, current);
+      } catch (IOException e) {
+        System.err.println("Error processing rib files: " + e.getMessage());
+        e.printStackTrace();
       }
-    } catch (IOException e) {
-      System.err.println("Error processing files: " + e.getMessage());
-      e.printStackTrace();
+    }
+
+    if (compareBgpRibs) {
+      try {
+        Path bgpRibsPath =
+            outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("bgpRibs");
+        FileDiffComparator comparator = new FileDiffComparator();
+        Path initialPath = bgpRibsPath.resolve("_initial");
+        for (Path current : Files.newDirectoryStream(bgpRibsPath)) {
+          if (initialPath.equals(current)) {
+            continue;
+          }
+          comparator.compareFolder(initialPath, current);
+        }
+      } catch (IOException e) {
+        System.err.println("Error processing bgpRib files: " + e.getMessage());
+        e.printStackTrace();
+      }
+    }
+
+    if (compareFibs) {
+      try {
+        Path fibsPath =
+            outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("fibs");
+        FileDiffComparator comparator = new FileDiffComparator();
+        Path initialPath = fibsPath.resolve("_initial");
+        for (Path current : Files.newDirectoryStream(fibsPath)) {
+          if (initialPath.equals(current)) {
+            continue;
+          }
+          comparator.compareFolder(initialPath, current);
+        }
+      } catch (IOException e) {
+        System.err.println("Error processing files: " + e.getMessage());
+        e.printStackTrace();
+      }
     }
   }
 }
