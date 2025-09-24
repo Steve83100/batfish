@@ -670,7 +670,7 @@ final class BgpRoutingProcess implements RoutingProcess<BgpTopology, BgpRoute<?,
     String sessionInterface = configId.getPeerInterface(); // Session's interface. Only unnumbered sessions have this
 
     // Within eBGP RIB, filter out routes that was received from this session
-    Set<Bgpv4Route> routesToRemove = _ebgpv4Rib.getAllRoutes().stream()
+    Set<Bgpv4Route> routesToRemove = _ebgpv4Rib.getRoutes().stream()
             .filter(route -> {
                       ReceivedFrom receivedFrom = route.getReceivedFrom();
 
