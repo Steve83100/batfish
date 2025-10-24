@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class FileDiffComparator {
+public class FileComparator {
 
   private Set<String> getFileNames(Path folder) throws IOException {
     return Files.list(folder)

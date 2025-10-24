@@ -170,7 +170,7 @@ public final class IibdpPlugin extends DataPlanePlugin {
   }
 
   /**
-   * Calls IIBDP engine multiple times, each time applying one link reset This gurantees simulation
+   * Calls IIBDP engine multiple times, each time applying one link reset. This gurantees simulation
    * of real-life link reset outcomes, but is relatively slower
    */
   public Map<String, ComputeDataPlaneResult> computeDataPlaneWithIsolatedResets(
@@ -286,6 +286,9 @@ public final class IibdpPlugin extends DataPlanePlugin {
    *
    * <p>It only supports removing existing routes from session downs, but does not save backup
    * routes, so it doesn't allow routes recovery after later enabling
+   *
+   * Later comment: Is this true? I thought the only problem with continuous resets is that is only does one sequence
+   * and therefore does not guarantee generating all states.
    */
   public Map<String, ComputeDataPlaneResult> computeDataPlaneWithContinuousResets(
       NetworkSnapshot snapshot) {

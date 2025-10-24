@@ -134,17 +134,17 @@ public class BfRunner {
   }
 
   public static void main(String... args) {
-    String network = "additionalPathsDemo";
+    String network = "batfishExamples/example";
     Queue<InterfaceModification> intfMods = new LinkedList<>();
     BfRunner test = new BfRunner(network);
 
-    test.computeDataPlane();
+//    test.computeDataPlane();
 
-    // intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", false));
-    // intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", true));
-    // test.computeDataPlaneWithIntfMods(intfMods);
+//     intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", false));
+//     intfMods.add(new InterfaceModification("r2", "FastEthernet0/0", true));
+//     test.computeDataPlaneWithIntfMods(intfMods);
 
     // test.computeDataPlaneWithLinkPerms();
-    // test.computeDataPlaneWithLinkResets(false);
+     test.computeDataPlaneWithLinkResets(false);
   }
 }

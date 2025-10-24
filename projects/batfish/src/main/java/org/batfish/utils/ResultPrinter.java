@@ -4,6 +4,7 @@ import static org.batfish.utils.StorageUtils.getBufferedWriter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.google.common.collect.Ordering;
 import com.google.common.collect.Table;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -241,6 +242,7 @@ public class ResultPrinter {
       list.addAll(
           cell.getValue().getRoutes().stream()
               .map(AbstractRoute::toString)
+              .sorted(Ordering.natural().nullsLast())
               .collect(Collectors.toList()));
       list.add("\n");
       map.computeIfAbsent(hostname, x -> new LinkedList<>()).addAll(list);
@@ -258,7 +260,11 @@ public class ResultPrinter {
       for (Map.Entry<String, Set<Bgpv4Route>> e2 : e1.getValue().entrySet()) {
         String vrfName = e2.getKey();
         list.add(vrfName);
-        list.addAll(e2.getValue().stream().map(Bgpv4Route::toString).collect(Collectors.toList()));
+        list.addAll(
+            e2.getValue().stream()
+                .map(Bgpv4Route::toString)
+                .sorted(Ordering.natural().nullsLast())
+                .collect(Collectors.toList()));
         list.add("\n");
       }
       map.put(hostName, list);
@@ -285,6 +291,7 @@ public class ResultPrinter {
                             + entry.getAction()
                             + ",\t"
                             + entry.getTopLevelRoute())
+                .sorted(Ordering.natural().nullsLast())
                 .collect(Collectors.toList()));
         list.add("\n");
       }
@@ -494,8 +501,8 @@ public class ResultPrinter {
     Map<String, DataPlane> hashToDataPlane = batfish.loadMultiDataPlane(batfish.getSnapshot());
 
     for (Map.Entry<String, DataPlane> hashAndDP : hashToDataPlane.entrySet()) {
-      // entry.getKey() is the data plane's hash (now with type String)
-      // entry.getValue() is the data plane
+      // hashAndDP.getKey() is the data plane's hash (now with type String)
+      // hashAndDP.getValue() is the data plane
       // For each data plane, extract its per host RIB into a Map<String, List<String>>
 
       DataPlane dataPlane = hashAndDP.getValue();
@@ -509,6 +516,7 @@ public class ResultPrinter {
         list.addAll(
             cell.getValue().getRoutes().stream()
                 .map(AbstractRoute::toString)
+                .sorted(Ordering.natural().nullsLast())
                 .collect(Collectors.toList()));
         list.add("\n");
         map.computeIfAbsent(hostname, x -> new LinkedList<>()).addAll(list);
@@ -542,7 +550,10 @@ public class ResultPrinter {
           String vrfName = e2.getKey();
           list.add(vrfName);
           list.addAll(
-              e2.getValue().stream().map(Bgpv4Route::toString).collect(Collectors.toList()));
+              e2.getValue().stream()
+                  .map(Bgpv4Route::toString)
+                  .sorted(Ordering.natural().nullsLast())
+                  .collect(Collectors.toList()));
           list.add("\n");
         }
         map.put(hostName, list);
@@ -584,6 +595,7 @@ public class ResultPrinter {
                               + entry.getAction()
                               + ",\t"
                               + entry.getTopLevelRoute())
+                  .sorted(Ordering.natural().nullsLast())
                   .collect(Collectors.toList()));
           list.add("\n");
         }
@@ -623,7 +635,7 @@ public class ResultPrinter {
       try {
         Path ribsPath =
             outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("ribs");
-        FileDiffComparator comparator = new FileDiffComparator();
+        FileComparator comparator = new FileComparator();
         Path initialPath = ribsPath.resolve("_initial");
         for (Path current : Files.newDirectoryStream(ribsPath)) {
           if (initialPath.equals(current)) {
@@ -641,7 +653,7 @@ public class ResultPrinter {
       try {
         Path bgpRibsPath =
             outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("bgpRibs");
-        FileDiffComparator comparator = new FileDiffComparator();
+        FileComparator comparator = new FileComparator();
         Path initialPath = bgpRibsPath.resolve("_initial");
         for (Path current : Files.newDirectoryStream(bgpRibsPath)) {
           if (initialPath.equals(current)) {
@@ -659,7 +671,7 @@ public class ResultPrinter {
       try {
         Path fibsPath =
             outputSnapshot.resolve("output").resolve("resultPrinterOutput").resolve("fibs");
-        FileDiffComparator comparator = new FileDiffComparator();
+        FileComparator comparator = new FileComparator();
         Path initialPath = fibsPath.resolve("_initial");
         for (Path current : Files.newDirectoryStream(fibsPath)) {
           if (initialPath.equals(current)) {
